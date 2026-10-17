@@ -1,503 +1,322 @@
 # Movie Review Sentiment Classification
 
-A Natural Language Processing project focused on automatically classifying IMDB movie reviews as **positive** or **negative**.
+> Versión en español: [LEEME.md](LEEME.md)
 
-The project compares multiple text preprocessing strategies, TF-IDF representations, and machine learning models to identify the most effective approach for sentiment classification.
+A Natural Language Processing (NLP) project that classifies **IMDB movie reviews as positive or negative** from their text alone.
 
-The final model, **LinearSVC with TF-IDF unigram and bigram features**, achieved an **F1-score of 0.9043 on the test set**, exceeding the project requirement of **F1 ≥ 0.85**.
-
----
-
-## Project Overview
-
-Film Junky Union, a community for classic movie enthusiasts, requires an automated system capable of filtering and categorizing movie reviews according to their sentiment.
-
-The objective of this project was to build and evaluate machine learning models capable of classifying IMDB reviews as:
-
-* Positive
-* Negative
-
-The main performance requirement was:
-
-```text
-F1-score ≥ 0.85
-```
-
-Several preprocessing strategies and machine learning models were evaluated to determine the best combination of predictive performance and computational efficiency.
+The project compares three text preprocessing strategies (basic cleaning, NLTK lemmatization, and spaCy lemmatization), two **TF-IDF** representations (unigrams and unigrams + bigrams), and four models. The selected model, **LinearSVC with TF-IDF unigrams + bigrams**, achieved an **F1-score of 0.9139 on validation** and **0.9043 F1 with 0.9663 ROC-AUC on the independent test set** (23,535 reviews), well above the requirement of **F1 ≥ 0.85**.
 
 ---
 
-## Project Workflow
+# Business Context
+
+Film Junky Union, a community for classic movie enthusiasts, is building a system to filter and categorize movie reviews. The goal is to **automatically detect negative reviews**, so the community does not have to read and label thousands of texts by hand. A reliable model helps to:
+
+* Classify new reviews as soon as they are published.
+* Summarize the general opinion about a movie from many reviews.
+* Free moderators from manual labeling.
+
+The model must predict one target:
+
+| Target | Description |
+| --- | --- |
+| `pos` | 1 if the review is positive, 0 if it is negative |
+
+---
+
+# NLP Concepts
+
+| Term | Meaning |
+| --- | --- |
+| Corpus | The full collection of texts (here, the reviews) |
+| Token | A unit of text, usually a word |
+| Lemmatization | Reducing a word to its dictionary form (`movies` → `movie`, `were` → `be`) |
+| TF-IDF | Term Frequency × Inverse Document Frequency: a word gets a high weight if it is frequent in a review but rare in the rest of the corpus |
+| N-gram | A sequence of *n* consecutive words. Unigrams are single words; bigrams are pairs such as `not good` |
+| Sparse matrix | A matrix where most values are zero. Each review uses only a few hundred of the hundreds of thousands of possible words |
+| `sublinear_tf` | Uses `1 + log(tf)` instead of the raw count, so repeating a word many times does not dominate the review |
+| `min_df` / `max_df` | Ignore words that appear in fewer than 2 reviews or in more than 95% of them |
+
+## Text Representation
 
 ```text
-                                IMDB DATASET
-                                     │
-                                     ▼
-                           Data Loading and Exploration
-                                     │
-                    ┌────────────────┴────────────────┐
-                    ▼                                 ▼
-              Data Quality                    Exploratory Analysis
-                    │                                 │
-                    ▼                                 ▼
-            Missing Values                     Class Balance
-                                                      │
-                                                      ▼
-                                         Approximately balanced
-                                         positive/negative classes
-                                                      │
-                                                      ▼
-                                               Data Splitting
-                                                      │
-                                                      ▼
-                                          Text Preprocessing
-                                                      │
-             ┌────────────────────────┬───────────────┴────────────────────┐
-             ▼                        ▼                                    ▼
-        Basic Cleaning          NLTK Lemmatization                  spaCy Lemmatization
-             │                        │                                    │
-             └────────────────────────┴──────────────────┬─────────────────┘
-                                                          ▼
-                                                 TF-IDF Vectorization
-                                                          │
-                        ┌─────────────────────────────────┼─────────────────────────────────┐
-                        ▼                                 ▼                                 ▼
-                    Unigrams                     Unigrams + Bigrams                  Model Comparison
-                        │                                 │
-            ┌───────────┴───────────┐         ┌───────────┴────────────┐
-            ▼                       ▼         ▼                        ▼
-     Logistic Regression       LinearSVC  Logistic Regression       LinearSVC
-                                            │
-                                            ▼
-                                    LightGBM + Bigrams
-                                            │
-                                            ▼
-                              Performance and Efficiency Comparison
-                                            │
-                                            ▼
-                                  Best Model Selection
-                                            │
-                                            ▼
-                            Retraining on the Training Dataset
-                                            │
-                                            ▼
-                                  Final Test Evaluation
-                                            │
-                                            ▼
-                              Classification of New Reviews
-                                            │
-                                            ▼
-                                        Conclusions
+"This movie wasn't very good!!!"
+        │  basic cleaning
+        ▼
+"this movie wasn't very good"
+        │  TF-IDF (unigrams + bigrams)
+        ▼
+[ this, movie, wasn't, very, good, this movie, movie wasn't, wasn't very, very good ]
+        │
+        ▼
+Sparse vector with ~417,000 possible features → linear classifier
 ```
+
+---
+
+# Evaluation Metric
+
+The main metric is the **F1-score**, the harmonic mean of Precision and Recall:
+
+$$
+F1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}
+$$
+
+F1 is only high when the model both **finds most negative/positive reviews** (Recall) and **is right when it flags them** (Precision). It also exposes trivial models: a `DummyClassifier` that always predicts the majority class gets about 50% Accuracy but **F1 = 0**.
+
+**ROC-AUC** and **Accuracy** were recorded as secondary metrics. For LinearSVC, ROC-AUC is computed from `decision_function` scores, since the model does not output probabilities.
+
+The project requirement was **F1 ≥ 0.85** on the test set.
 
 ---
 
 # Dataset
 
-The dataset used in this project contains IMDB movie reviews and their corresponding sentiment labels.
+| File | Rows | Columns | Description |
+| --- | ---: | ---: | --- |
+| `data/imdb_reviews.tsv` | 47,331 | 17 | Review text, sentiment label, movie metadata, and the original train/test partition |
 
-**File:**
+Main columns used:
 
-```text
-data/imdb_reviews.tsv
-```
+| Column | Description |
+| --- | --- |
+| `review` | Review text (the only feature used by the models) |
+| `pos` | Target: 0 = negative, 1 = positive |
+| `ds_part` | Original partition: `train` or `test` |
 
-### Dataset characteristics
+* The classes are balanced: **23,715 negative (50.1%)** and **23,616 positive (49.9%)** reviews.
+* Only `average_rating` and `votes` have missing values (2 each); neither is used by the models.
 
-| Feature               |    Value |
-| --------------------- | -------: |
-| Records               |   47,331 |
-| Columns               |       17 |
-| Target variable       |    `pos` |
-| Text feature          | `review` |
-| Missing target values |        0 |
-| Missing review values |        0 |
-
-The target variable `pos` represents the sentiment classification:
-
-```text
-0 → Negative review
-1 → Positive review
-```
-
-The dataset was approximately balanced, with close to 50% positive and 50% negative reviews. Therefore, no class balancing techniques were required.
-
-Two missing values were found in:
-
-* `average_rating`
-* `votes`
-
-These variables were not required for the text classification models.
+**Data source.** The dataset was provided by **TripleTen** as part of its Data Science Bootcamp. It is based on the IMDB review dataset published by Maas et al. (2011), *Learning Word Vectors for Sentiment Analysis*, and is included in this repository for educational and reproducibility purposes.
 
 ---
 
-# Data Splitting
-
-The original dataset already included a predefined partition through the `ds_part` column.
-
-The data was divided as follows:
+# Project Workflow
 
 ```text
-Complete Dataset
-│
-├── ds_part = train
-│       │
-│       ├── Internal Training Set → 80%
-│       │
-│       └── Validation Set → 20%
-│
-└── ds_part = test
-        │
-        └── Final Test Set
+IMDB reviews (47,331)
+            │
+            ▼
+1. Data loading and quality checks
+            │
+            ▼
+2. Exploratory analysis: class balance and review length
+            │
+            ▼
+3. Split: original test kept apart; original train → 80% train / 20% validation
+            │
+            ▼
+4. Text preprocessing
+   ├── Basic cleaning (lowercase, letters and apostrophes only)
+   ├── + NLTK lemmatization
+   └── + spaCy lemmatization
+            │
+            ▼
+5. TF-IDF vectorization (unigrams, then unigrams + bigrams)
+            │
+            ▼
+6. Modeling on validation
+   ├── DummyClassifier (baseline)
+   ├── Logistic Regression × 3 preprocessing strategies
+   ├── LinearSVC
+   ├── Logistic Regression and LinearSVC with bigrams
+   └── LightGBM with bigrams
+            │
+            ▼
+7. Retrain the best model on the full original train set and evaluate once on test
+            │
+            ▼
+8. Classify 14 hand-written reviews
 ```
-
-## Original Dataset Partition
-
-The predefined dataset split contained:
-
-| Dataset          |    Records |
-| ---------------- | ---------: |
-| Training dataset |     23,796 |
-| Test dataset     |     23,535 |
-| **Total**        | **47,331** |
-
-The original test set was kept completely separate during model development and hyperparameter selection.
 
 ---
 
-## Internal Train-Validation Split
+# 1. Data Preparation
 
-The original training dataset was further divided using `train_test_split`:
+* The TSV file was loaded with `votes` as a nullable integer (`Int64`).
+* No rows were removed and no values were imputed: the models only use `review` → `pos`, and both columns are complete.
+* The original `ds_part` partition was respected. The test set (**23,535 reviews**) was kept apart until the final evaluation.
+* The original train set (**23,796 reviews**) was split into internal train and validation with `stratify`:
+
+```text
+Complete dataset (47,331)
+│
+├── ds_part = train (23,796)
+│       ├── Internal train ──→ 19,036 (80%) → model training
+│       └── Validation ──────→  4,760 (20%) → model and hyperparameter selection
+│
+└── ds_part = test (23,535) ───→ final evaluation (used only once)
+```
+
+All three sets keep the same class proportion (about 50.1% negative / 49.9% positive).
+
+---
+
+# 2. Exploratory Analysis
+
+## Class Balance
+
+| Partition | Negative | Positive |
+| --- | ---: | ---: |
+| Train | 11,912 (50.06%) | 11,884 (49.94%) |
+| Test | 11,803 (50.15%) | 11,732 (49.85%) |
+
+The difference between classes is below 1%, so no balancing technique (oversampling, undersampling, or class weights) was needed.
+
+## Review Length
+
+| Class | Mean words | Median words | Max words |
+| --- | ---: | ---: | ---: |
+| Negative | 227.5 | 173 | 1,491 |
+| Positive | 231.3 | 171 | 2,459 |
+
+* Reviews are long: a median of **172 words**, with the middle 50% between about 126 and 278 words.
+* The length distributions of both classes almost completely overlap, so **length is not a useful signal**; the sentiment must be learned from the words themselves.
+
+---
+
+# 3. Text Preprocessing and Vectorization
+
+## Preprocessing Strategies
+
+| Strategy | Steps | TF-IDF features (unigrams) |
+| --- | --- | ---: |
+| Basic cleaning | Lowercase, keep only letters `a-z` and apostrophes, collapse spaces | 39,531 |
+| NLTK lemmatization | Basic cleaning + `word_tokenize` + `WordNetLemmatizer` | 35,027 |
+| spaCy lemmatization | Basic cleaning + `en_core_web_sm` lemmas (parser and NER disabled) | — |
+
+Apostrophes were kept so that negations such as `wasn't` or `didn't` remain single tokens.
+
+Example of lemmatization:
+
+```text
+Original: The movies were amazing and the actors were running beautifully.
+NLTK:     The movie were amazing and the actor were running beautifully .
+spaCy:    the movie be amazing and the actor be run beautifully .
+```
+
+NLTK's `WordNetLemmatizer` treats every word as a noun when no part of speech is given, so it only changed plurals. spaCy also lemmatized verbs, but it took about **3.5 minutes** to process the training set.
+
+## TF-IDF Configuration
 
 ```python
-X_train, X_valid, y_train, y_valid = train_test_split(
-    X,
-    y,
-    test_size=0.20,
-    random_state=42,
-    stratify=y
-)
+TfidfVectorizer(ngram_range=(1, 1),   # or (1, 2) for bigrams
+                min_df=2, max_df=0.95, sublinear_tf=True)
 ```
 
-The `stratify` parameter was used to preserve the original class distribution across the training and validation datasets.
-
-The resulting split was:
-
-| Dataset               | Records | Percentage of Original Training Set |
-| --------------------- | ------: | ----------------------------------: |
-| Internal training set |  19,036 |                                 80% |
-| Validation set        |   4,760 |                                 20% |
-| Original training set |  23,796 |                                100% |
-
-The validation set was used to:
-
-* Compare preprocessing strategies.
-* Compare TF-IDF configurations.
-* Evaluate unigram and bigram representations.
-* Compare machine learning models.
-* Test hyperparameter configurations.
-* Select the final model.
+The vectorizer was always **fitted on the training texts only** and then applied to validation and test. Adding bigrams increased the feature space from 39,531 to **350,997** columns on the internal train set (416,551 on the full train set).
 
 ---
 
-## Final Training and Test Evaluation
+# 4. Modeling
 
-After selecting the best configuration:
+Each model was tested with a small grid of hyperparameters (`C` for the linear models; trees, learning rate, and leaves for LightGBM), and the best configuration by validation F1 was kept.
+
+## Experiment 1: Basic Cleaning vs Lemmatization (Logistic Regression, unigrams)
+
+| Preprocessing | Best `C` | F1 | ROC-AUC |
+| --- | ---: | ---: | ---: |
+| **Basic cleaning** | 2 | **0.8989** | 0.9606 |
+| NLTK lemmatization | 2 | 0.8973 | 0.9595 |
+| spaCy lemmatization | 5 | 0.8932 | 0.9578 |
+
+Lemmatization reduced the vocabulary but did not improve the results, and spaCy was much slower. **Basic cleaning was kept** for the rest of the project.
+
+## Experiment 2: Logistic Regression vs LinearSVC (unigrams)
+
+| Model | Best `C` | F1 | Accuracy | ROC-AUC | Training time |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Logistic Regression | 2 | **0.8989** | 0.8979 | 0.9606 | 1.78 s |
+| LinearSVC | 0.5 | 0.8988 | **0.8983** | **0.9614** | **0.21 s** |
+
+Both linear models performed almost the same, but LinearSVC trained about **8 times faster**.
+
+## Experiment 3: Impact of Bigrams
+
+| Model | Unigrams | Unigrams + Bigrams | Gain |
+| --- | ---: | ---: | ---: |
+| Logistic Regression | 0.8989 | 0.9076 | +0.0086 |
+| LinearSVC | 0.8988 | **0.9139** | **+0.0150** |
+
+Bigrams gave the **largest improvement in the project**, larger than any preprocessing change. They let the model capture short expressions such as `not good`, `not bad`, or `waste of`, where a single word gives the wrong signal.
+
+## Experiment 4: LightGBM (unigrams + bigrams)
+
+| Configuration | F1 | ROC-AUC | Training time |
+| --- | ---: | ---: | ---: |
+| 200 trees, `learning_rate=0.1`, 31 leaves | **0.8785** | 0.9506 | 93 s |
+| 300 trees, `learning_rate=0.05`, 31 leaves | 0.8763 | 0.9473 | 141 s |
+| 200 trees, `learning_rate=0.05`, 15 leaves | 0.8530 | 0.9306 | 58 s |
+
+LightGBM met the requirement but was **less accurate and about 200 times slower** than LinearSVC. With hundreds of thousands of sparse features, a linear boundary fits the problem better than trees.
+
+## Validation Summary
+
+| Model | F1 | Accuracy | ROC-AUC | Training time |
+| --- | ---: | ---: | ---: | ---: |
+| **LinearSVC + Bigrams** (`C=0.5`) | **0.9139** | **0.9137** | **0.9677** | 0.47 s |
+| Logistic Regression + Bigrams (`C=5`) | 0.9076 | 0.9074 | 0.9662 | 4.50 s |
+| Logistic Regression (`C=2`) | 0.8989 | 0.8979 | 0.9606 | 1.78 s |
+| LinearSVC (`C=0.5`) | 0.8988 | 0.8983 | 0.9614 | 0.21 s |
+| Logistic Regression + NLTK (`C=2`) | 0.8973 | 0.8966 | 0.9595 | 1.51 s |
+| Logistic Regression + spaCy (`C=5`) | 0.8932 | 0.8924 | 0.9578 | 2.48 s |
+| LightGBM + Bigrams | 0.8785 | 0.8782 | 0.9506 | 92.95 s |
+| DummyClassifier (most frequent) | 0.0000 | 0.5006 | 0.5000 | 0.001 s |
+
+## Final Result
+
+The TF-IDF vectorizer and the model were refitted on the **full original train set (23,796 reviews)** and evaluated **once** on the test set:
 
 ```text
-LinearSVC
-+
-TF-IDF
-+
-Unigrams and Bigrams
+Model:          LinearSVC (C=0.5, max_iter=5000) + TF-IDF unigrams + bigrams
+Validation F1:  0.9139
+Test F1:        0.9043
+Test Accuracy:  0.9046
+Test ROC-AUC:   0.9663
+Requirement:    F1 ≥ 0.85   ✓
 ```
 
-the model was retrained using the complete original training dataset containing **23,796 reviews**.
+| Class | Precision | Recall | F1 | Support |
+| --- | ---: | ---: | ---: | ---: |
+| Negative | 0.91 | 0.90 | 0.90 | 11,803 |
+| Positive | 0.90 | 0.90 | 0.90 | 11,732 |
 
-The final model was then evaluated using the independent test set containing **23,535 reviews**.
+The F1 dropped by about 0.01 from validation to test, which is expected for data that took no part in model selection. Performance is **balanced between both classes**.
 
-This workflow ensured that the final test set was not used during model selection.
+## Hand-Written Reviews
 
-### Final Evaluation
+The best configuration of each model was used to classify 14 new reviews written by hand:
 
-```text
-Training dataset: 23,796 reviews
-
-Test dataset:     23,535 reviews
-
-Final model:
-LinearSVC + TF-IDF (Unigrams + Bigrams)
-
-Final Test F1-score:
-0.904334
-```
+* All the linear models (Logistic Regression and LinearSVC, with or without lemmatization or bigrams) gave **the same label to all 14 reviews**.
+* Clear reviews such as *"One of the worst movies I have ever seen…"* or *"I loved this film…"* were classified correctly by every model.
+* *"I didn't expect the reboot to be so good!"* was classified as **negative** by the linear models, probably because words such as `didn't` are frequent in negative reviews. LightGBM got it right, but it also labeled two clearly negative reviews as positive (*"I did not simply like it…"* and *"Well, I was bored and felt asleep…"*).
 
 ---
 
-# Text Preprocessing
+# Conclusions
 
-Several preprocessing approaches were evaluated.
+1. **The dataset was balanced**, so no balancing technique was needed and F1 was a fair metric for both classes.
 
-## Basic Cleaning
+2. **Basic cleaning was better than lemmatization.** Neither NLTK nor spaCy improved F1, and spaCy added several minutes of processing.
 
-The basic preprocessing pipeline included:
+3. **Logistic Regression and LinearSVC performed almost identically** with unigrams, but LinearSVC was about 8 times faster.
 
-* Converting text to lowercase.
-* Removing non-alphabetic characters.
-* Preserving apostrophes.
-* Removing extra whitespace.
+4. **Bigrams were the most important improvement** (+0.015 F1 for LinearSVC). How the text is represented mattered more than how it was normalized.
 
-Example:
+5. **LightGBM was less accurate and much slower** on this high-dimensional sparse data.
 
-```text
-"This movie wasn't very good!!!"
-```
+6. **The final model exceeds the requirement**: 0.9043 F1 and 0.9663 ROC-AUC on 23,535 unseen reviews, with balanced results for both classes.
 
-becomes approximately:
+## Business Interpretation
 
-```text
-"this movie wasn't very good"
-```
+The model classifies about 9 out of 10 reviews correctly and trains in under one second, so it can be retrained often and used to label new reviews automatically. Reviews with sarcasm, contrast (*"not bad, but…"*), or unexpected praise are the most likely errors, so borderline cases could be sent to a moderator.
 
----
+## Next Steps
 
-## NLTK Lemmatization
-
-A second preprocessing strategy used:
-
-* Tokenization with NLTK.
-* WordNet lemmatization.
-* Reconstruction of the processed text.
-
----
-
-## spaCy Lemmatization
-
-A third approach used spaCy for linguistic preprocessing and lemmatization.
-
-Although lemmatization can theoretically reduce vocabulary complexity, it did not improve model performance for this dataset.
-
----
-
-# Feature Engineering
-
-Text was transformed into numerical representations using **TF-IDF vectorization**.
-
-Two main configurations were evaluated:
-
-### Unigrams
-
-```text
-ngram_range=(1, 1)
-```
-
-Example:
-
-```text
-movie
-good
-boring
-excellent
-```
-
-### Unigrams and Bigrams
-
-```text
-ngram_range=(1, 2)
-```
-
-This configuration allowed the models to capture short expressions such as:
-
-```text
-not good
-not bad
-very good
-very bad
-waste time
-highly recommend
-```
-
-The inclusion of bigrams produced the largest improvement in predictive performance.
-
----
-
-# Models Evaluated
-
-The following models were compared:
-
-* DummyClassifier
-* Logistic Regression
-* LinearSVC
-* LightGBM
-
-Different combinations of preprocessing strategies and TF-IDF configurations were evaluated.
-
----
-
-# Model Performance
-
-## Validation Results
-
-| Model                         |           F1 |     Accuracy |      ROC-AUC | Training Time |
-| ----------------------------- | -----------: | -----------: | -----------: | ------------: |
-| **LinearSVC + Bigrams**       | **0.913855** | **0.913655** | **0.967661** |    **0.47 s** |
-| Logistic Regression + Bigrams |     0.907567 |     0.907353 |     0.966184 |        4.50 s |
-| Logistic Regression           |     0.898918 |     0.897899 |     0.960568 |        1.78 s |
-| LinearSVC                     |     0.898829 |     0.898319 |     0.961366 |        0.21 s |
-| Logistic Regression + NLTK    |     0.897329 |     0.896639 |     0.959479 |        1.51 s |
-| Logistic Regression + spaCy   |     0.893244 |     0.892437 |     0.957768 |        2.48 s |
-| LightGBM + Bigrams            |     0.878509 |     0.878151 |     0.950561 |       92.95 s |
-| DummyClassifier               |     0.000000 |     0.500630 |     0.500000 |       0.001 s |
-
----
-
-# Key Findings
-
-## 1. Basic Cleaning vs. Lemmatization
-
-For Logistic Regression using unigram TF-IDF features:
-
-| Preprocessing Strategy |           F1 |
-| ---------------------- | -----------: |
-| **Basic Cleaning**     | **0.898918** |
-| NLTK Lemmatization     |     0.897329 |
-| spaCy Lemmatization    |     0.893244 |
-
-Lemmatization did not improve model performance.
-
-Additionally, spaCy required substantially more preprocessing time. Processing the training dataset required approximately 3 minutes and 32 seconds, while basic cleaning was significantly more efficient.
-
-Therefore, **basic text cleaning was selected as the primary preprocessing strategy**.
-
----
-
-## 2. Logistic Regression vs. LinearSVC
-
-Using unigram TF-IDF features:
-
-| Model               |           F1 |     Accuracy |      ROC-AUC | Training Time |
-| ------------------- | -----------: | -----------: | -----------: | ------------: |
-| Logistic Regression | **0.898918** |     0.897899 |     0.960568 |        2.21 s |
-| LinearSVC           |     0.898829 | **0.898319** | **0.961366** |    **0.21 s** |
-
-Both models achieved nearly identical predictive performance.
-
-However, LinearSVC trained approximately ten times faster.
-
-This result demonstrates that linear models are particularly effective for high-dimensional and sparse TF-IDF representations.
-
----
-
-## 3. Impact of Bigrams
-
-The largest improvement came from modifying the text representation.
-
-| Model               | Unigrams | Unigrams + Bigrams |
-| ------------------- | -------: | -----------------: |
-| Logistic Regression | 0.898918 |           0.907567 |
-| LinearSVC           | 0.898829 |       **0.913855** |
-
-Adding bigrams improved:
-
-* Logistic Regression by approximately **0.0086 F1 points**.
-* LinearSVC by approximately **0.0150 F1 points**.
-
-This improvement was greater than the gains obtained from additional linguistic preprocessing.
-
-The results suggest that capturing short expressions such as:
-
-```text
-not good
-not bad
-very good
-very bad
-```
-
-was more valuable than applying lemmatization.
-
----
-
-## 4. LightGBM Results
-
-LightGBM was also evaluated using TF-IDF features with unigram and bigram representations.
-
-Its best result was:
-
-```text
-F1-score:          0.878509
-Accuracy:          0.878151
-ROC-AUC:           0.950561
-Training time:     92.95 seconds
-```
-
-Compared with the linear models:
-
-| Model                         |      Best F1 | Training Time |
-| ----------------------------- | -----------: | ------------: |
-| **LinearSVC + Bigrams**       | **0.913855** |    **0.47 s** |
-| Logistic Regression + Bigrams |     0.907567 |        4.50 s |
-| Logistic Regression           |     0.898918 |        1.78 s |
-| LinearSVC                     |     0.898829 |        0.21 s |
-| LightGBM + Bigrams            |     0.878509 |       92.95 s |
-
-LightGBM required significantly more computational time while producing lower predictive performance.
-
-For this dataset and TF-IDF representation, linear models proved to be a better fit.
-
----
-
-# Final Model
-
-The selected model was:
-
-```text
-LinearSVC
-```
-
-with:
-
-```text
-C = 0.5
-max_iter = 5000
-random_state = 42
-```
-
-The text representation used:
-
-```text
-TF-IDF
-ngram_range = (1, 2)
-```
-
-This configuration includes both unigrams and bigrams.
-
----
-
-# Final Results
-
-After selecting the best configuration during validation, the model was retrained using the complete training dataset and evaluated on the test set.
-
-```text
-Model:
-LinearSVC + TF-IDF (Unigrams + Bigrams)
-
-Validation F1:
-0.913855
-
-Final Test F1:
-0.904334
-
-Project Requirement:
-F1 ≥ 0.85
-```
-
-## Result
-
-```text
-✓ PROJECT REQUIREMENT ACHIEVED
-```
-
-The final model exceeded the required F1-score by more than 5 percentage points.
+* Use the LinearSVC `decision_function` score to send low-confidence reviews to manual review.
+* Inspect the largest positive and negative coefficients to explain which words and bigrams drive each prediction.
+* Try trigrams or character n-grams to capture longer negations.
+* Compare with a pre-trained transformer model (for example, BERT) to measure the gain against its higher computational cost.
 
 ---
 
@@ -510,7 +329,7 @@ movie-review-sentiment-classification/
 │   └── imdb_reviews.tsv
 │
 ├── notebooks/
-│   └── movies_reviews_classification.ipynb
+│   └── movie_reviews_classification.ipynb
 │
 ├── src/
 │   └── funciones_personales.py
@@ -518,6 +337,7 @@ movie-review-sentiment-classification/
 ├── .gitignore
 ├── environment.yml
 ├── requirements.txt
+├── LEEME.md
 └── README.md
 ```
 
@@ -529,42 +349,35 @@ Clone the repository:
 
 ```bash
 git clone https://github.com/pablo-vc87/movie-review-sentiment-classification.git
+
 cd movie-review-sentiment-classification
 ```
 
 ## Option 1: Conda
 
-Create the environment using:
-
 ```bash
 conda env create -f environment.yml
-```
-
-Activate it:
-
-```bash
 conda activate nlp_movie_reviews
 ```
 
-Then start Jupyter:
-
-```bash
-jupyter notebook
-```
-
----
-
 ## Option 2: pip
 
-Create and activate a virtual environment.
-
-Install the required dependencies:
+Create and activate a virtual environment, then:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Then launch Jupyter:
+## Language Resources
+
+The lemmatization experiments need the spaCy English model and the NLTK data:
+
+```bash
+python -m spacy download en_core_web_sm
+python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); nltk.download('wordnet')"
+```
+
+Then start Jupyter, open `notebooks/movie_reviews_classification.ipynb`, and run all cells:
 
 ```bash
 jupyter notebook
@@ -579,53 +392,27 @@ jupyter notebook
 * NumPy
 * Matplotlib
 * Seaborn
-* scikit-learn
+* scikit-learn (TF-IDF, Logistic Regression, LinearSVC, DummyClassifier)
 * LightGBM
 * NLTK
 * spaCy
-* TF-IDF
+* tqdm
 * Jupyter Notebook
 
 ---
 
 # Skills Demonstrated
 
-This project demonstrates experience with:
-
 * Natural Language Processing
-* Text preprocessing
-* TF-IDF vectorization
-* N-gram analysis
+* Text cleaning and normalization
+* Lemmatization with NLTK and spaCy
+* TF-IDF vectorization with unigrams and bigrams
 * Sentiment classification
-* Machine Learning model comparison
+* Model comparison: Logistic Regression, LinearSVC, LightGBM, and a baseline
 * Hyperparameter tuning
-* Model evaluation
-* F1-score optimization
-* ROC-AUC analysis
-* Performance benchmarking
-* Data preprocessing
-* Python-based data analysis
-
----
-
-# Conclusions
-
-The objective of this project was to develop an automated system capable of classifying movie reviews as positive or negative while achieving an F1-score of at least 0.85.
-
-Several preprocessing strategies, linear models, and a gradient boosting model were evaluated.
-
-The main conclusions were:
-
-1. The dataset was approximately balanced, so class balancing techniques were not necessary.
-2. Basic text cleaning performed better than NLTK and spaCy lemmatization.
-3. Logistic Regression and LinearSVC achieved very similar performance with unigram TF-IDF features.
-4. LinearSVC required significantly less training time than Logistic Regression.
-5. Adding bigrams produced the largest improvement in model performance.
-6. LinearSVC with unigram and bigram TF-IDF features achieved the best validation performance with an F1-score of **0.913855**.
-7. After retraining and evaluating on the test set, the final model achieved an F1-score of **0.904334**.
-8. LightGBM was less effective and substantially slower for this sparse TF-IDF representation.
-
-The final solution demonstrates that, for high-dimensional sparse text data, a relatively simple linear model combined with an appropriate feature representation can outperform more computationally expensive machine learning algorithms.
+* Train / validation / test methodology without data leakage
+* F1, ROC-AUC, and confusion matrix evaluation
+* Performance vs computational cost analysis
 
 ---
 
@@ -633,8 +420,8 @@ The final solution demonstrates that, for high-dimensional sparse text data, a r
 
 **Pablo Andrés Vázquez Calva**
 
-Data Analyst | Data Science
+Data Scientist
 
-GitHub: [github.com/pablo-vc87](https://github.com/pablo-vc87)
+GitHub: https://github.com/pablo-vc87
 
-LinkedIn: [linkedin.com/in/pablo-avc](https://www.linkedin.com/in/pablo-avc/)
+LinkedIn: https://www.linkedin.com/in/pablo-avc/

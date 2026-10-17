@@ -1,8 +1,6 @@
 name: nlp_movie_reviews
 channels:
   - conda-forge
-  - defaults
-
 dependencies:
   - python=3.11
   - numpy
@@ -14,7 +12,5 @@ dependencies:
   - nltk
   - spacy
   - tqdm
-  - pip
-  - pip:
-      - jupyter
-      - ipykernel
+  - jupyter
+  - ipykernel
